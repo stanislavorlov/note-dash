@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Музична Аркада</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --text-color: #333;
+            --accent-color: #5c6bc0; /* Трохи змінив колір на більш "серйозний" */
+            --success-color: #4caf50;
+            --error-color: #f44336;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 15px;
+            box-sizing: border-box;
+            touch-action: manipulation;
+        }
+
+        h1 { margin-bottom: 10px; font-size: 22px; text-align: center;}
+
+        #game-container {
+            background: white;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+            overflow: hidden; /* Важливо для анімації */
+        }
+
+        canvas {
+            display: block;
+            background: #fff;
+            margin-bottom: 15px;
+            width: 100%;
+            height: auto;
+            /* Вимикаємо рамку канвасу, щоб виглядало чистіше */
+        }
+
+        #controls {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        #controls .second-row {
+            grid-column: span 4;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        button {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 12px 0;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.1s ease-in-out;
+            width: 100%;
+            max-width: 80px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        button:active { transform: translateY(2px); box-shadow: none; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        button.correct { background-color: var(--success-color) !important; transform: scale(1.05); }
+        button.wrong { background-color: var(--error-color) !important; animation: shake 0.3s; }
+
+        #score-board { font-size: 18px; margin-bottom: 10px; font-weight: bold;}
+        #message {
+            height: 20px;
+            font-size: 16px;
+            font-weight: bold;
+            color: var(--accent-color);
+            margin-bottom: 10px;
+        }
+
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            50% { transform: translateX(5px); }
+            75% { transform: translateX(-5px); }
+            100% { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <h1>Вгадай ноту на ходу!</h1>
+        
+        <div id="score-board">Рахунок: <span id="score">0</span></div>
+        <div id="message">Приготуйся...</div>
+
+        <canvas id="musicCanvas" width="400" height="200"></canvas>
+        
+        <div id="controls">
+            <button onclick="checkAnswer('C')">C</button>
+            <button onclick="checkAnswer('D')">D</button>
+            <button onclick="checkAnswer('E')">E</button>
+            <button onclick="checkAnswer('F')">F</button>
+            <div class="second-row">
+                <button onclick="checkAnswer('G')">G</button>
+                <button onclick="checkAnswer('A')">A</button>
+                <button onclick="checkAnswer('B')">B</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('musicCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const messageElement = document.getElementById('message');
+        const buttons = document.querySelectorAll('#controls button');
+
+        // --- Налаштування гри ---
+        let score = 0;
+        let currentNote = null;
+        let animationId = null; // ID для контролю циклу анімації
+        let isGameActive = false; // Флаг, чи йде зараз раунд (нота рухається)
+        const noteSpeed = 2.5; // Швидкість руху ноти (пікселів за кадр)
+
+        // --- Конфігурація візуалізації ---
+        const staveStartY = 70;
+        const lineSpacing = 20;
+        const staveWidth = canvas.width;
+
+        // Дані нот (ті самі, що й раніше)
+        const notesData = [
+            { name: 'C', offset: 10, hasLedger: true }, // C4 (До)
+            { name: 'D', offset: 9, hasLedger: false },
+            { name: 'E', offset: 8, hasLedger: false },
+            { name: 'F', offset: 7, hasLedger: false },
+            { name: 'G', offset: 6, hasLedger: false },
+            { name: 'A', offset: 5, hasLedger: false },
+            { name: 'B', offset: 4, hasLedger: false },
+            { name: 'C', offset: 3, hasLedger: false },
+            { name: 'D', offset: 2, hasLedger: false },
+            { name: 'E', offset: 1, hasLedger: false },
+            { name: 'F', offset: 0, hasLedger: false }, // Верхня лінія
+            { name: 'G', offset: -1, hasLedger: false },
+            { name: 'A', offset: -2, hasLedger: true }  // A5 (Ля)
+        ];
+
+        // --- Функції малювання ---
+
+        function drawStave() {
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                let y = staveStartY + (i * lineSpacing);
+                ctx.moveTo(0, y); // Лінії на всю ширину
+                ctx.lineTo(staveWidth, y);
+            }
+            ctx.stroke();
+            drawTrebleClefSymbol();
+        }
+
+        function drawTrebleClefSymbol() {
+            ctx.fillStyle = '#333';
+            ctx.font = '65px serif';
+            // Малюємо ключ зліва, фіксовано
+            ctx.fillText("𝄞", 10, staveStartY + lineSpacing * 4 - 2);
+        }
+
+        // Функція малювання ноти тепер приймає X координату
+        function drawNote(note, xPos) {
+            const topFLineY = staveStartY; 
+            const noteY = topFLineY + (note.offset * (lineSpacing / 2));
+
+            ctx.fillStyle = '#000';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+
+            // Додаткова лінія
+            if (note.hasLedger) {
+                ctx.beginPath();
+                ctx.moveTo(xPos - 18, noteY);
+                ctx.lineTo(xPos + 18, noteY);
+                ctx.stroke();
+            }
+
+            // Головка ноти
+            ctx.beginPath();
+            // Трохи нахиляємо ноту для більш класичного вигляду
+            ctx.ellipse(xPos, noteY, 11, 9, -0.2, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // Штиль
+            ctx.beginPath();
+            ctx.lineWidth = 2.5;
+            if (note.offset >= 5) {
+                ctx.moveTo(xPos + 10, noteY);
+                ctx.lineTo(xPos + 10, noteY - 45);
+            } else {
+                ctx.moveTo(xPos - 10, noteY);
+                ctx.lineTo(xPos - 10, noteY + 45);
+            }
+            ctx.stroke();
+        }
+
+
+        // --- Логіка гри ---
+
+        // Головний цикл анімації
+        function gameLoop() {
+            // 1. Очищаємо канвас
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 2. Малюємо фон (стан і ключ)
+            drawStave();
+
+            if (currentNote) {
+                // 3. Оновлюємо позицію ноти (рух вліво)
+                currentNote.currentX -= noteSpeed;
+
+                // 4. Малюємо ноту на новій позиції
+                drawNote(currentNote, currentNote.currentX);
+
+                // 5. Перевірка виходу за межі екрану
+                if (currentNote.currentX < -30) {
+                    handleMissedNote();
+                    return; // Виходимо з циклу, щоб не запрошувати новий кадр
+                }
+            }
+
+            // 6. Запитуємо наступний кадр анімації
+            if (isGameActive) {
+                animationId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function nextTurn() {
+            resetUI();
+            isGameActive = true;
+            
+            // Вибираємо випадкову ноту
+            currentNote = { ...notesData[Math.floor(Math.random() * notesData.length)] };
+            // Встановлюємо початкову позицію за межами екрану праворуч
+            currentNote.currentX = canvas.width + 30;
+            
+            messageElement.textContent = '';
+            enableButtons(true);
+            
+            // Запускаємо цикл анімації
+            gameLoop();
+        }
+
+        function checkAnswer(selectedNoteName) {
+            // Якщо гра не активна (вже показали результат), ігноруємо кліки
+            if (!isGameActive) return;
+
+            // ЗУПИНЯЄМО анімацію миттєво
+            isGameActive = false;
+            cancelAnimationFrame(animationId);
+            enableButtons(false); // Блокуємо кнопки, поки показуємо результат
+
+            const selectedButton = Array.from(buttons).find(btn => btn.textContent === selectedNoteName);
+
+            if (selectedNoteName === currentNote.name) {
+                score += 10; // Більше балів за швидкість
+                messageElement.textContent = 'Чудово! +10 балів';
+                messageElement.style.color = 'var(--success-color)';
+                selectedButton.classList.add('correct');
+            } else {
+                score = Math.max(0, score - 5); // Штраф за помилку
+                messageElement.textContent = `Ні, це була нота ${currentNote.name}. -5 балів`;
+                messageElement.style.color = 'var(--error-color)';
+                selectedButton.classList.add('wrong');
+            }
+            scoreElement.textContent = score;
+
+            // Пауза перед наступним раундом
+            setTimeout(nextTurn, 1500);
+        }
+
+        function handleMissedNote() {
+            isGameActive = false;
+            cancelAnimationFrame(animationId);
+            enableButtons(false);
+            
+            score = Math.max(0, score - 2); // Невеликий штраф за пропуск
+            scoreElement.textContent = score;
+            messageElement.textContent = `Пропущено! Це була ${currentNote.name}`;
+            messageElement.style.color = 'var(--text-color)';
+
+            setTimeout(nextTurn, 1200);
+        }
+
+        // --- Допоміжні функції UI ---
+        function resetUI() {
+             buttons.forEach(btn => btn.classList.remove('correct', 'wrong'));
+        }
+        function enableButtons(enabled) {
+            buttons.forEach(btn => btn.disabled = !enabled);
+        }
+
+        // Запуск гри після короткої затримки для завантаження шрифтів
+        setTimeout(nextTurn, 1000);
+
+    </script>
+</body>
+</html>
